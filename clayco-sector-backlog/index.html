@@ -1,0 +1,197 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>Sector Backlog & Plan Attainment — Clayco Sigma Plugin</title>
+<script src="https://unpkg.com/@sigmacomputing/plugin"></script>
+<style>
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{height:100%}
+  body{font-family:-apple-system,BlinkMacSystemFont,Inter,Segoe UI,Roboto,Arial,sans-serif;
+       background:transparent;color:#2A2D31;overflow:hidden}
+  #wrap{height:100%;width:100%;display:flex;flex-direction:column;padding:10px 14px;gap:6px}
+  #top{display:flex;justify-content:space-between;align-items:baseline;flex:0 0 auto}
+  #ttl{font-size:12px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:#ED3125}
+  #meta{font-size:11px;color:#7A7F85}
+  #meta b{color:#2A2D31}
+  #stage{flex:1;min-height:0;position:relative}
+  svg{width:100%;height:100%;display:block}
+  .cell{cursor:default}
+  .cell:hover{opacity:.85}
+  #legend{flex:0 0 auto;display:flex;align-items:center;gap:14px;font-size:10px;color:#7A7F85}
+  .sw{display:inline-block;width:10px;height:10px;border-radius:2px;vertical-align:-1px;margin-right:5px}
+  #tip{position:fixed;pointer-events:none;background:#1B1D20;border:1px solid #ED3125;
+       border-radius:8px;padding:8px 10px;font-size:11px;color:#F4F4F5;opacity:0;
+       transition:opacity .1s;z-index:10;white-space:nowrap;box-shadow:0 8px 24px rgba(0,0,0,.4)}
+  #tip b{color:#FF9985}
+</style>
+</head>
+<body>
+<div id="wrap">
+  <div id="top">
+    <div id="ttl">Sector backlog &amp; plan attainment</div>
+    <div id="meta">contract value <b id="tot">—</b> · sectors <b id="cnt">—</b></div>
+  </div>
+  <div id="stage"><svg id="svg" xmlns="http://www.w3.org/2000/svg"></svg></div>
+  <div id="legend">
+    <span><i class="sw" style="background:#2FA36B"></i>ahead of plan</span>
+    <span><i class="sw" style="background:#2A2D31"></i>on plan</span>
+    <span><i class="sw" style="background:#ED3125"></i>behind plan</span>
+    <span style="color:#B0B4B8">arc = % of plan · ring size = contract value</span>
+  </div>
+</div>
+<div id="tip"></div>
+<script>
+(function(){
+  var client=(window.sigmaComputing&&window.sigmaComputing.plugin&&window.sigmaComputing.plugin.client)||null;
+
+  var defs=[
+    {name:'source',type:'element'},
+    {name:'product',type:'column',source:'source',label:'Sector'},
+    {name:'balance',type:'column',source:'source',allowedTypes:['number','integer'],label:'Contract value ($B)'},
+    {name:'members',type:'column',source:'source',allowedTypes:['number','integer'],label:'Projects (K)'},
+    {name:'goal',type:'column',source:'source',allowedTypes:['number','integer'],label:'Plan attainment'}
+  ];
+  if(client) client.config.configureEditorPanel(defs);
+
+  var NS='http://www.w3.org/2000/svg';
+  function el(n,a){var e=document.createElementNS(NS,n);for(var k in a)e.setAttribute(k,a[k]);return e;}
+  // status colour from plan attainment (goal is a ratio, ~0.80-1.16)
+  function statusColor(g){ if(g>1.02) return '#2FA36B'; if(g<0.98) return '#ED3125'; return '#2A2D31'; }
+  function statusText(g){ if(g>1.02) return 'Ahead'; if(g<0.98) return 'Behind'; return 'On plan'; }
+  function abbrev(s){
+    s=String(s||'');
+    return s.replace(' & ',' & ').replace('Advanced Industrial & Manufacturing','Adv. Industrial & Mfg')
+            .replace('Mission-Critical & Data Centers','Mission-Critical / Data Ctr')
+            .replace('Life Sciences & Healthcare','Life Sciences & Health')
+            .replace('Commercial & Institutional','Commercial & Institutional')
+            .replace('Food & Beverage & Process','Food, Beverage & Process')
+            .replace('Residential & Hospitality','Residential & Hospitality');
+  }
+
+  var tip=document.getElementById('tip');
+  function bind(node,html){
+    node.addEventListener('mousemove',function(e){
+      tip.innerHTML=html; tip.style.opacity=1;
+      tip.style.left=Math.min(window.innerWidth-tip.offsetWidth-10,e.clientX+14)+'px';
+      tip.style.top=Math.max(8,e.clientY-tip.offsetHeight-12)+'px';
+    });
+    node.addEventListener('mouseleave',function(){tip.style.opacity=0;});
+  }
+
+  // 270-degree arc gauge per sector: track + value arc filled to attainment,
+  // ring radius scaled by contract value so bigger sectors read bigger.
+  var TAU=Math.PI*2, START=Math.PI*0.75, SWEEP=Math.PI*1.5, FULL=1.20; // gauge tops out at 120%
+  function arcPath(cx,cy,r,a0,a1){
+    var x0=cx+r*Math.cos(a0), y0=cy+r*Math.sin(a0);
+    var x1=cx+r*Math.cos(a1), y1=cy+r*Math.sin(a1);
+    var large=(a1-a0)>Math.PI?1:0;
+    return 'M '+x0.toFixed(2)+' '+y0.toFixed(2)+' A '+r+' '+r+' 0 '+large+' 1 '+x1.toFixed(2)+' '+y1.toFixed(2);
+  }
+
+  function draw(rows){
+    var svg=document.getElementById('svg');
+    while(svg.firstChild) svg.removeChild(svg.firstChild);
+    var st=document.getElementById('stage');
+    var W=Math.max(320,st.clientWidth), H=Math.max(150,st.clientHeight);
+    svg.setAttribute('viewBox','0 0 '+W+' '+H);
+
+    var n=rows.length||1;
+    // choose columns to best fill the stage aspect ratio
+    var cols=n; if(W/H < 3.2) cols=Math.ceil(n/2); if(W/H < 1.4) cols=Math.ceil(n/3);
+    cols=Math.max(1,Math.min(n,cols));
+    var rowsN=Math.ceil(n/cols);
+    var cw=W/cols, ch=H/rowsN;
+    var maxBal=1; rows.forEach(function(d){maxBal=Math.max(maxBal,d.balance||0);});
+    var totBal=0; rows.forEach(function(d){totBal+=d.balance||0;});
+    document.getElementById('tot').textContent='$'+totBal.toFixed(1)+'B';
+    document.getElementById('cnt').textContent=String(n);
+
+    rows.forEach(function(d,i){
+      var cxCell=(i%cols)*cw, cyCell=Math.floor(i/cols)*ch;
+      var cx=cxCell+cw/2, cy=cyCell+ch*0.44;
+      // radius scaled by contract value (sqrt so area reads proportionally)
+      var rMax=Math.min(cw,ch)*0.34;
+      var r=Math.max(rMax*0.55, rMax*Math.sqrt((d.balance||0)/maxBal));
+      var col=statusColor(d.goal||0);
+      var attain=Math.max(0,Math.min(FULL,d.goal||0));
+      var grp=document.createElementNS(NS,'g'); // group
+      grp.setAttribute('class','cell'); svg.appendChild(grp);
+      // track
+      grp.appendChild(el('path',{d:arcPath(cx,cy,r,START,START+SWEEP),fill:'none',
+                    stroke:'#E4E7EA','stroke-width':Math.max(5,r*0.20),'stroke-linecap':'round'}));
+      // value arc
+      var frac=attain/FULL;
+      grp.appendChild(el('path',{d:arcPath(cx,cy,r,START,START+SWEEP*frac),fill:'none',
+                    stroke:col,'stroke-width':Math.max(5,r*0.20),'stroke-linecap':'round'}));
+      // 100%-of-plan tick
+      var ta=START+SWEEP*(1.0/FULL);
+      grp.appendChild(el('line',{x1:(cx+ (r-r*0.16)*Math.cos(ta)).toFixed(2),
+                    y1:(cy+(r-r*0.16)*Math.sin(ta)).toFixed(2),
+                    x2:(cx+(r+r*0.16)*Math.cos(ta)).toFixed(2),
+                    y2:(cy+(r+r*0.16)*Math.sin(ta)).toFixed(2),
+                    stroke:'#9AA0A6','stroke-width':1.5}));
+      // centre contract value
+      var v=el('text',{x:cx,y:cy-1,'text-anchor':'middle','font-size':Math.max(13,r*0.42),
+                    'font-weight':800,fill:'#2A2D31'}); v.textContent='$'+(d.balance||0).toFixed(1)+'B';
+      grp.appendChild(v);
+      // attainment % under value
+      var pct=el('text',{x:cx,y:cy+Math.max(13,r*0.42)*0.85,'text-anchor':'middle',
+                    'font-size':Math.max(9,r*0.24),'font-weight':700,fill:col});
+      pct.textContent=Math.round((d.goal||0)*100)+'%'; grp.appendChild(pct);
+      // sector name below the gauge
+      var nm=el('text',{x:cx,y:cyCell+ch-8,'text-anchor':'middle','font-size':11,
+                    fill:'#4A4F55'}); nm.textContent=abbrev(d.product);
+      grp.appendChild(nm);
+      bind(grp,'<b>'+String(d.product)+'</b><br>Contract value $'+(d.balance||0).toFixed(2)+'B'+
+             '<br>Plan attainment '+Math.round((d.goal||0)*100)+'% · '+statusText(d.goal||0)+
+             (d.members?('<br>~'+Math.round((d.members||0)*1000).toLocaleString()+' projects'):''));
+    });
+  }
+
+  function synth(){
+    return [
+      {product:'Advanced Industrial & Manufacturing',balance:2.44,members:1.15,goal:1.03},
+      {product:'Mission-Critical & Data Centers',balance:2.67,members:0.78,goal:1.14},
+      {product:'Life Sciences & Healthcare',balance:1.27,members:0.56,goal:1.05},
+      {product:'Commercial & Institutional',balance:1.16,members:0.82,goal:0.96},
+      {product:'Food & Beverage & Process',balance:0.69,members:0.38,goal:1.02},
+      {product:'Residential & Hospitality',balance:0.61,members:0.44,goal:0.92}
+    ];
+  }
+
+  var S={cfg:{},data:null,unsub:null};
+  function recompute(){
+    var c=S.cfg||{},d=S.data,rows=null;
+    if(d&&c.product&&d[c.product]){
+      var pp=d[c.product]||[],bb=d[c.balance]||[],mm=d[c.members]||[],gg=d[c.goal]||[];
+      rows=[];
+      for(var i=0;i<pp.length;i++){
+        rows.push({product:String(pp[i]||''),balance:Number(bb[i])||0,
+                   members:Number(mm[i])||0,goal:Number(gg[i])||0});
+      }
+      if(!rows.length||!rows.some(function(r){return r.balance>0;})) rows=null;
+    }
+    draw(rows||synth());
+  }
+
+  if(client){
+    client.config.subscribe(function(cfg){
+      S.cfg=cfg||{};
+      if(S.unsub){S.unsub();S.unsub=null;}
+      if(cfg&&cfg.source){
+        S.unsub=client.elements.subscribeToElementData(cfg.source,function(dd){S.data=dd;recompute();});
+      }
+      recompute();
+    });
+  } else { recompute(); }
+
+  // ResizeObserver, not window resize; no animation loop so PNG export idles.
+  if(window.ResizeObserver){
+    new ResizeObserver(function(){recompute();}).observe(document.getElementById('stage'));
+  }
+})();
+</script>
+</body>
+</html>
