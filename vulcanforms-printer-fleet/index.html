@@ -1,0 +1,190 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>Printer Fleet Utilization — VulcanForms Sigma Plugin</title>
+<script src="https://unpkg.com/@sigmacomputing/plugin"></script>
+<style>
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{height:100%}
+  body{font-family:-apple-system,BlinkMacSystemFont,Inter,Segoe UI,Roboto,Arial,sans-serif;
+       background:transparent;color:#1E1E1E;overflow:hidden}
+  #wrap{height:100%;width:100%;display:flex;flex-direction:column;padding:10px 14px;gap:6px}
+  #top{display:flex;justify-content:space-between;align-items:baseline;flex:0 0 auto}
+  #ttl{font-size:12px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:#D9491F}
+  #meta{font-size:11px;color:#7A7F85}
+  #meta b{color:#1E1E1E}
+  #stage{flex:1;min-height:0;position:relative}
+  svg{width:100%;height:100%;display:block}
+  .cell{cursor:default}
+  .cell:hover rect{stroke:#1E1E1E;stroke-width:1.5}
+  #legend{flex:0 0 auto;display:flex;align-items:center;gap:14px;font-size:10px;color:#7A7F85}
+  .sw{display:inline-block;width:10px;height:10px;border-radius:2px;vertical-align:-1px;margin-right:5px}
+  #tip{position:fixed;pointer-events:none;background:#1E1E1E;border:1px solid #D9491F;
+       border-radius:8px;padding:8px 10px;font-size:11px;color:#F4F4F5;opacity:0;
+       transition:opacity .1s;z-index:10;white-space:nowrap;box-shadow:0 8px 24px rgba(0,0,0,.4)}
+  #tip b{color:#F2A93B}
+</style>
+</head>
+<body>
+<div id="wrap">
+  <div id="top">
+    <div id="ttl">Printer fleet utilization</div>
+    <div id="meta">avg utilization <b id="avgu">—</b> · printers <b id="cnt">—</b></div>
+  </div>
+  <div id="stage"><svg id="svg" xmlns="http://www.w3.org/2000/svg"></svg></div>
+  <div id="legend">
+    <span><i class="sw" style="background:#F2A93B"></i>building (hot)</span>
+    <span><i class="sw" style="background:#8A3A18"></i>building (warm)</span>
+    <span><i class="sw" style="background:#6B7480"></i>idle</span>
+    <span><i class="sw" style="background:#7A2E12"></i>down / maintenance</span>
+  </div>
+</div>
+<div id="tip"></div>
+<script>
+(function(){
+  var client=(window.sigmaComputing&&window.sigmaComputing.plugin&&window.sigmaComputing.plugin.client)||null;
+
+  var defs=[
+    {name:'source',type:'element'},
+    {name:'facility',type:'column',source:'source',label:'Facility'},
+    {name:'printer',type:'column',source:'source',label:'Printer'},
+    {name:'material',type:'column',source:'source',label:'Material'},
+    {name:'utilization',type:'column',source:'source',allowedTypes:['number','integer'],label:'Utilization'},
+    {name:'status',type:'column',source:'source',label:'Status'},
+    {name:'job',type:'column',source:'source',label:'Build Job'}
+  ];
+  if(client) client.config.configureEditorPanel(defs);
+
+  var NS='http://www.w3.org/2000/svg';
+  function el(n,a){var e=document.createElementNS(NS,n);for(var k in a)e.setAttribute(k,a[k]);return e;}
+
+  // molten-metal read: building tiles glow amber->ember with utilization; a
+  // cool steel gray at rest; a dead rust red when down or in maintenance.
+  function tileColor(status,u){
+    var s=String(status||'').toLowerCase();
+    if(s==='down'||s==='maintenance') return '#7A2E12';
+    if(s==='idle') return '#6B7480';
+    var t=Math.max(0,Math.min(1,(u||0)/100));
+    // interpolate ember (#8A3A18) -> amber (#F2A93B) by utilization
+    var c0=[0x8A,0x3A,0x18], c1=[0xF2,0xA9,0x3B];
+    var rgb=c0.map(function(v,i){return Math.round(v+(c1[i]-v)*t);});
+    return 'rgb('+rgb.join(',')+')';
+  }
+  function textOn(status){ return (String(status||'').toLowerCase()==='idle') ? '#1E1E1E' : '#FFFFFF'; }
+
+  var tip=document.getElementById('tip');
+  function bind(node,html){
+    node.addEventListener('mousemove',function(e){
+      tip.innerHTML=html; tip.style.opacity=1;
+      tip.style.left=Math.min(window.innerWidth-tip.offsetWidth-10,e.clientX+14)+'px';
+      tip.style.top=Math.max(8,e.clientY-tip.offsetHeight-12)+'px';
+    });
+    node.addEventListener('mouseleave',function(){tip.style.opacity=0;});
+  }
+
+  function draw(rows){
+    var svg=document.getElementById('svg');
+    while(svg.firstChild) svg.removeChild(svg.firstChild);
+    var st=document.getElementById('stage');
+    var W=Math.max(320,st.clientWidth), H=Math.max(150,st.clientHeight);
+    svg.setAttribute('viewBox','0 0 '+W+' '+H);
+
+    // group by facility, preserving first-seen order
+    var order=[], byFac={};
+    rows.forEach(function(r){
+      if(!byFac[r.facility]){byFac[r.facility]=[];order.push(r.facility);}
+      byFac[r.facility].push(r);
+    });
+
+    var running=rows.filter(function(r){return String(r.status||'').toLowerCase()!=='idle' &&
+                                                  String(r.status||'').toLowerCase()!=='down' &&
+                                                  String(r.status||'').toLowerCase()!=='maintenance';});
+    var avgU=running.length ? (running.reduce(function(a,r){return a+(r.utilization||0);},0)/running.length) : 0;
+    document.getElementById('avgu').textContent=Math.round(avgU)+'%';
+    document.getElementById('cnt').textContent=String(rows.length);
+
+    var padTop=18, rowGap=6, labelW=6;
+    var facH=(H-padTop)/order.length;
+    order.forEach(function(fac,fi){
+      var facTiles=byFac[fac];
+      var y0=padTop+fi*facH;
+      var lbl=el('text',{x:labelW,y:y0+12,'font-size':11,'font-weight':700,fill:'#1E1E1E'});
+      lbl.textContent=fac; svg.appendChild(lbl);
+      var gridTop=y0+18, gridH=facH-24;
+      var cols=facTiles.length, tw=(W-2*labelW)/cols, th=Math.min(gridH,tw*0.82);
+      facTiles.forEach(function(r,ci){
+        var x=labelW+ci*tw, y=gridTop+(gridH-th)/2;
+        var g=document.createElementNS(NS,'g'); g.setAttribute('class','cell'); svg.appendChild(g);
+        var pad=Math.max(3,tw*0.08);
+        var rect=el('rect',{x:x+pad,y:y,width:tw-2*pad,height:th,rx:6,
+                    fill:tileColor(r.status,r.utilization),stroke:'none'});
+        g.appendChild(rect);
+        var pctTxt=el('text',{x:x+tw/2,y:y+th*0.42,'text-anchor':'middle',
+                    'font-size':Math.max(10,th*0.22),'font-weight':800,fill:textOn(r.status)});
+        pctTxt.textContent=(String(r.status||'').toLowerCase()==='idle'||String(r.status||'').toLowerCase()==='down'||String(r.status||'').toLowerCase()==='maintenance')
+                            ? String(r.status).toUpperCase().slice(0,4) : Math.round(r.utilization||0)+'%';
+        g.appendChild(pctTxt);
+        var idTxt=el('text',{x:x+tw/2,y:y+th*0.72,'text-anchor':'middle',
+                    'font-size':Math.max(8,th*0.14),fill:textOn(r.status),opacity:0.85});
+        idTxt.textContent=r.printer||''; g.appendChild(idTxt);
+        bind(g,'<b>'+(r.printer||'')+'</b> · '+fac+
+               '<br>Status: '+(r.status||'—')+(r.material?(' · '+r.material):'')+
+               (r.utilization!=null?('<br>Utilization: '+Math.round(r.utilization)+'%'):'')+
+               (r.job?('<br>Job: '+r.job):''));
+      });
+    });
+  }
+
+  function synth(){
+    return [
+      {facility:'Newburyport',printer:'NB-L01',material:'Titanium Ti-6Al-4V',utilization:94,status:'Building',job:'TH-7 Turbine Housing'},
+      {facility:'Newburyport',printer:'NB-L02',material:'Inconel 718',utilization:88,status:'Building',job:'EC-3 Combustor Liner'},
+      {facility:'Newburyport',printer:'NB-L03',material:'17-4 PH Stainless',utilization:76,status:'Building',job:'SB-2 Structural Bracket'},
+      {facility:'Newburyport',printer:'NB-L04',material:'Titanium Ti-6Al-4V',utilization:0,status:'Maintenance',job:null},
+      {facility:'Devens 1',printer:'DV1-L01',material:'Titanium Ti-6Al-4V',utilization:97,status:'Building',job:'AS-1 Airframe Spar'},
+      {facility:'Devens 1',printer:'DV1-L02',material:'Cobalt-Chrome',utilization:82,status:'Building',job:'HI-4 Hip Implant Cup'},
+      {facility:'Devens 1',printer:'DV1-L03',material:'17-4 PH Stainless',utilization:0,status:'Down',job:null},
+      {facility:'Devens 1',printer:'DV1-L04',material:'Inconel 718',utilization:73,status:'Idle',job:null},
+      {facility:'Devens 2 (New)',printer:'DV2-L01',material:'Titanium Ti-6Al-4V',utilization:58,status:'Building',job:'AS-2 Wing Rib Qualification'},
+      {facility:'Devens 2 (New)',printer:'DV2-L02',material:null,utilization:0,status:'Idle',job:null}
+    ];
+  }
+
+  var S={cfg:{},data:null,unsub:null};
+  function recompute(){
+    var c=S.cfg||{},d=S.data,rows=null;
+    if(d&&c.facility&&d[c.facility]){
+      var ff=d[c.facility]||[],pp=d[c.printer]||[],mm=d[c.material]||[],
+          uu=d[c.utilization]||[],ss=d[c.status]||[],jj=d[c.job]||[];
+      rows=[];
+      for(var i=0;i<ff.length;i++){
+        rows.push({facility:String(ff[i]||''),printer:String(pp[i]||''),
+                   material:mm[i]?String(mm[i]):null,utilization:Number(uu[i])||0,
+                   status:String(ss[i]||''),job:jj[i]?String(jj[i]):null});
+      }
+      if(!rows.length) rows=null;
+    }
+    draw(rows||synth());
+  }
+
+  if(client){
+    client.config.subscribe(function(cfg){
+      S.cfg=cfg||{};
+      if(S.unsub){S.unsub();S.unsub=null;}
+      if(cfg&&cfg.source){
+        S.unsub=client.elements.subscribeToElementData(cfg.source,function(dd){S.data=dd;recompute();});
+      }
+      recompute();
+    });
+  } else { recompute(); }
+
+  // ResizeObserver, not window resize; no animation loop so PNG export idles.
+  if(window.ResizeObserver){
+    new ResizeObserver(function(){recompute();}).observe(document.getElementById('stage'));
+  }
+})();
+</script>
+</body>
+</html>
