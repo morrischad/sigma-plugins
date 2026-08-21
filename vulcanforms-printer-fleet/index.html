@@ -123,8 +123,9 @@
         g.appendChild(rect);
         var pctTxt=el('text',{x:x+tw/2,y:y+th*0.42,'text-anchor':'middle',
                     'font-size':Math.max(10,th*0.22),'font-weight':800,fill:textOn(r.status)});
-        pctTxt.textContent=(String(r.status||'').toLowerCase()==='idle'||String(r.status||'').toLowerCase()==='down'||String(r.status||'').toLowerCase()==='maintenance')
-                            ? String(r.status).toUpperCase().slice(0,4) : Math.round(r.utilization||0)+'%';
+        var stLow=String(r.status||'').toLowerCase();
+        var stAbbrev={idle:'IDLE',down:'DOWN',maintenance:'MAINT'}[stLow];
+        pctTxt.textContent=stAbbrev || Math.round(r.utilization||0)+'%';
         g.appendChild(pctTxt);
         var idTxt=el('text',{x:x+tw/2,y:y+th*0.72,'text-anchor':'middle',
                     'font-size':Math.max(8,th*0.14),fill:textOn(r.status),opacity:0.85});
