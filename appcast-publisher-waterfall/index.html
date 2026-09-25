@@ -1,0 +1,210 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>Publisher Network Waterfall — Appcast Sigma Plugin</title>
+<script src="https://unpkg.com/@sigmacomputing/plugin"></script>
+<style>
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{height:100%}
+  body{font-family:-apple-system,BlinkMacSystemFont,Inter,Segoe UI,Roboto,Arial,sans-serif;
+       background:transparent;color:#05062C;overflow:hidden}
+  #wrap{height:100%;width:100%;display:flex;flex-direction:column;padding:10px 14px;gap:6px}
+  #top{display:flex;justify-content:space-between;align-items:baseline;flex:0 0 auto}
+  #ttl{font-size:12px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:#3138BB}
+  #meta{font-size:11px;color:#5B6B7F}
+  #meta b{color:#05062C}
+  #stage{flex:1;min-height:0;position:relative}
+  svg{width:100%;height:100%;display:block}
+  .bar{cursor:default}
+  .bar:hover{opacity:.85}
+  .cumdot{cursor:default}
+  #legend{flex:0 0 auto;font-size:10px;color:#5B6B7F}
+  #tip{position:fixed;pointer-events:none;background:#0A0C3D;border:1px solid #3138BB;
+       border-radius:8px;padding:8px 10px;font-size:11px;color:#EAF2FB;opacity:0;
+       transition:opacity .1s;z-index:10;white-space:nowrap;box-shadow:0 8px 24px rgba(0,0,0,.4)}
+  #tip b{color:#C7FFE2}
+</style>
+</head>
+<body>
+<div id="wrap">
+  <div id="top">
+    <div id="ttl">Publisher network waterfall</div>
+    <div id="meta">applies delivered <b id="tot">—</b> · top publisher <b id="topshare">—</b> of network</div>
+  </div>
+  <div id="stage"><svg id="svg" xmlns="http://www.w3.org/2000/svg"></svg></div>
+  <div id="legend">ranked by applies delivered across the exchange's publisher network — the stepped line is cumulative % of total, i.e. how concentrated delivery is in the top sites</div>
+</div>
+<div id="tip"></div>
+<script>
+(function(){
+  var client=(window.sigmaComputing&&window.sigmaComputing.plugin&&window.sigmaComputing.plugin.client)||null;
+
+  var defs=[
+    {name:'source',type:'element'},
+    {name:'publisher',type:'column',source:'source',label:'Publisher'},
+    {name:'applies',type:'column',source:'source',allowedTypes:['number','integer'],label:'Applies delivered'},
+    {name:'cumulative',type:'column',source:'source',allowedTypes:['number','integer'],label:'Cumulative %'}
+  ];
+  if(client) client.config.configureEditorPanel(defs);
+
+  var NS='http://www.w3.org/2000/svg';
+  function el(n,a){var e=document.createElementNS(NS,n);for(var k in a)e.setAttribute(k,a[k]);return e;}
+  function compact(v){
+    v=Number(v)||0;
+    if(v>=1e9) return (v/1e9).toFixed(v>=1e10?0:1)+'B';
+    if(v>=1e6) return (v/1e6).toFixed(v>=1e7?0:1)+'M';
+    if(v>=1e3) return (v/1e3).toFixed(0)+'K';
+    return String(Math.round(v));
+  }
+  function pct(x){var n=Number(x)||0; if(n<=1) n=n*100; return n.toFixed(n<10?1:0)+'%';}
+
+  // brand indigo, darkest for the #1 publisher, lightening down the ranking
+  var COLORS=['#3138BB','#4C51D6','#127FFC','#5AA6FF','#8FC3FF','#B7D8FE','#DAE2FD','#C7FFE2'];
+
+  var tip=document.getElementById('tip');
+  function bind(node,html){
+    node.addEventListener('mousemove',function(e){
+      tip.innerHTML=html; tip.style.opacity=1;
+      tip.style.left=Math.min(window.innerWidth-tip.offsetWidth-10,e.clientX+14)+'px';
+      tip.style.top=Math.max(8,e.clientY-tip.offsetHeight-12)+'px';
+    });
+    node.addEventListener('mouseleave',function(){tip.style.opacity=0;});
+  }
+
+  function draw(rows){
+    var svg=document.getElementById('svg');
+    while(svg.firstChild) svg.removeChild(svg.firstChild);
+    var st=document.getElementById('stage');
+    var W=Math.max(340,st.clientWidth), H=Math.max(160,st.clientHeight);
+    svg.setAttribute('viewBox','0 0 '+W+' '+H);
+
+    // ranked descending by applies delivered (a waterfall/Pareto ranking, not a
+    // sequential drop-off funnel -- bars are LEFT-aligned and a stepped
+    // cumulative line cascades down the right side)
+    rows=rows.slice().sort(function(a,b){return b.applies-a.applies;});
+    var total=0; rows.forEach(function(r){total+=r.applies;});
+    var top=rows.length?rows[0].applies:1;
+
+    document.getElementById('tot').textContent=compact(total);
+    document.getElementById('topshare').textContent= total? pct(rows[0].applies/total):'—';
+
+    var labelW=Math.min(120,W*0.28);
+    var padL=labelW+6, padR=54, padT=8, padB=8;
+    var plotW=Math.max(40,W-padL-padR), plotH=H-padT-padB;
+    var n=rows.length||1;
+    var gap=5;
+    var rh=(plotH-gap*(n-1))/n;
+
+    var cumPts=[];
+    for(var i=0;i<n;i++){
+      var r=rows[i];
+      var frac=Math.max(0.0001,r.applies/top);
+      var w=plotW*frac;
+      var x=padL;
+      var y=padT+i*(rh+gap);
+      var color=COLORS[Math.min(COLORS.length-1,i)];
+      var bar=el('rect',{x:x,y:y,width:w,height:rh,rx:3,fill:color,class:'bar'});
+      svg.appendChild(bar);
+
+      // publisher label, left of the bar
+      var lbl=el('text',{x:padL-8,y:y+rh/2+4,'text-anchor':'end',
+                         'font-size':Math.min(12,rh*0.5),'font-weight':700,fill:'#05062C'});
+      lbl.textContent=r.publisher;
+      svg.appendChild(lbl);
+
+      // applies count inside/right of the bar
+      var cnt=el('text',{x:x+w+6,y:y+rh/2+4,'font-size':Math.min(11,rh*0.46),
+                         'font-weight':700,fill:'#05062C'});
+      cnt.textContent=compact(r.applies);
+      svg.appendChild(cnt);
+
+      var cy=y+rh/2;
+      var cx=padL+plotW+34;
+      cumPts.push([cx,cy,r.cumulative]);
+
+      bind(bar,'<b>'+r.publisher+'</b><br>'+Number(r.applies).toLocaleString()+' applies delivered'+
+              '<br>cumulative '+pct(r.cumulative)+' of network total');
+    }
+
+    // stepped cumulative-% cascade down the right margin
+    if(cumPts.length){
+      var path='';
+      for(var j=0;j<cumPts.length;j++){
+        var p=cumPts[j];
+        path += (j===0?'M':'L')+p[0]+','+p[1];
+      }
+      var poly=el('path',{d:path,fill:'none',stroke:'#C7FFE2','stroke-width':2,
+                          'stroke-dasharray':'2,3','stroke-linecap':'round'});
+      svg.appendChild(poly);
+      cumPts.forEach(function(p){
+        var dot=el('circle',{cx:p[0],cy:p[1],r:3.2,fill:'#C7FFE2',stroke:'#05062C',
+                             'stroke-width':1,class:'cumdot'});
+        svg.appendChild(dot);
+        var t=el('text',{x:p[0]+8,y:p[1]+3.5,'font-size':9,'font-weight':700,fill:'#127FFC'});
+        t.textContent=pct(p[2]);
+        svg.appendChild(t);
+      });
+    }
+  }
+
+  function synth(){
+    // typical top publishers in a programmatic job-ad exchange, ranked by
+    // applies delivered -- illustrative order-of-magnitude, not Appcast's
+    // actual per-publisher split (not public)
+    var raw=[
+      ['Indeed',           6200000],
+      ['ZipRecruiter',     4100000],
+      ['LinkedIn',         3300000],
+      ['Google for Jobs',  2450000],
+      ['CareerBuilder',    1800000],
+      ['Glassdoor',        1350000],
+      ['Monster',           980000],
+      ['SimplyHired',       640000],
+      ['Snagajob',          410000],
+      ['Jora',              270000]
+    ];
+    var total=0; raw.forEach(function(r){total+=r[1];});
+    var running=0,out=[];
+    raw.forEach(function(r){
+      running+=r[1];
+      out.push({publisher:r[0],applies:r[1],cumulative:running/total});
+    });
+    return out;
+  }
+
+  var S={cfg:{},data:null,unsub:null};
+  function recompute(){
+    var c=S.cfg||{},d=S.data,rows=null;
+    if(d&&c.publisher&&d[c.publisher]){
+      var pp=d[c.publisher]||[],aa=d[c.applies]||[],cc=d[c.cumulative]||[];
+      rows=[];
+      for(var i=0;i<pp.length;i++){
+        rows.push({publisher:String(pp[i]||''),applies:Number(aa[i])||0,
+                   cumulative:cc.length?Number(cc[i])||0:0});
+      }
+      if(!rows.length||!rows.some(function(r){return r.applies>0;})) rows=null;
+    }
+    draw(rows||synth());
+  }
+
+  if(client){
+    client.config.subscribe(function(cfg){
+      S.cfg=cfg||{};
+      if(S.unsub){S.unsub();S.unsub=null;}
+      if(cfg&&cfg.source){
+        S.unsub=client.elements.subscribeToElementData(cfg.source,function(dd){S.data=dd;recompute();});
+      }
+      recompute();
+    });
+  } else { recompute(); }
+
+  // ResizeObserver, not window resize. No animation loop -> headless PNG reaches idle.
+  if(window.ResizeObserver){
+    new ResizeObserver(function(){recompute();}).observe(document.getElementById('stage'));
+  }
+})();
+</script>
+</body>
+</html>
