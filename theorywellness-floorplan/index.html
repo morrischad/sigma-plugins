@@ -1,0 +1,231 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>Facility Inventory Floor Plan — Theory Wellness Sigma Plugin</title>
+<script src="https://unpkg.com/@sigmacomputing/plugin"></script>
+<style>
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{height:100%}
+  body{font-family:-apple-system,BlinkMacSystemFont,Inter,Segoe UI,Roboto,Arial,sans-serif;background:transparent;color:#14231C;overflow:hidden}
+  #wrap{height:100%;display:flex;flex-direction:column;padding:10px 14px;gap:8px}
+  #top{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap}
+  #ttl{font-size:12px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:#2E7D4F}
+  #roles{display:flex;gap:4px}
+  .role{font-size:11px;padding:4px 10px;border-radius:14px;border:1px solid #C9D6CE;background:#fff;color:#4A5B52;cursor:pointer}
+  .role.on{background:#14231C;color:#fff;border-color:#14231C}
+  #kpis{display:flex;gap:8px;flex-wrap:wrap}
+  .kpi{flex:1;min-width:120px;background:#fff;border:1px solid #DCE6DF;border-radius:8px;padding:6px 10px}
+  .kpi small{display:block;font-size:10px;color:#6B7B72;text-transform:uppercase;letter-spacing:.04em}
+  .kpi b{font-size:18px}
+  #warn{display:none;background:#FDECEA;border:1px solid #E5A29B;color:#8E2418;border-radius:8px;padding:6px 10px;font-size:12px}
+  #warn b{font-weight:800}
+  #main{flex:1;min-height:0;display:flex;gap:10px}
+  #stage{flex:1 1 62%;min-width:0;position:relative}
+  svg#map{width:100%;height:100%;display:block}
+  #side{flex:0 0 36%;min-width:230px;overflow:auto;background:#fff;border:1px solid #DCE6DF;border-radius:8px;padding:10px 12px}
+  #side h3{font-size:14px;margin-bottom:2px}
+  #side .sub{font-size:11px;color:#6B7B72;margin-bottom:8px}
+  .row{margin-bottom:9px;font-size:11px}
+  .row .hd{display:flex;justify-content:space-between;gap:6px;margin-bottom:2px}
+  .row .hd span:last-child{color:#4A5B52;white-space:nowrap}
+  .bar{height:9px;background:#EDF2EE;border-radius:5px;position:relative;overflow:hidden}
+  .bar i{position:absolute;left:0;top:0;bottom:0;border-radius:5px 0 0 5px}
+  .bar u{position:absolute;top:0;bottom:0;background:repeating-linear-gradient(45deg,rgba(46,125,79,.0) 0 3px,rgba(46,125,79,.45) 3px 6px)}
+  .tanks{display:flex;gap:10px;margin:6px 0 10px}
+  .tank{flex:1;text-align:center;font-size:10px;color:#4A5B52}
+  .tank .cyl{height:90px;border:2px solid #14231C;border-radius:6px 6px 14px 14px;background:#F4F8F5;position:relative;overflow:hidden;margin:0 auto 4px;width:44px}
+  .tank .cyl i{position:absolute;left:0;right:0;bottom:0}
+  .tank b{display:block;font-size:11px;color:#14231C}
+  #legend{display:flex;gap:12px;flex-wrap:wrap;font-size:10px;color:#6B7B72}
+  .sw{display:inline-block;width:10px;height:10px;border-radius:2px;vertical-align:-1px;margin-right:4px}
+  .room{cursor:pointer}
+  .room:hover rect.b{stroke:#14231C;stroke-width:3}
+  .room.sel rect.b{stroke:#14231C;stroke-width:4}
+  text{font-family:inherit;pointer-events:none}
+</style>
+</head>
+<body>
+<div id="wrap">
+  <div id="top">
+    <div id="ttl">Facility inventory · Waterville, ME</div>
+    <div id="roles"></div>
+  </div>
+  <div id="kpis"></div>
+  <div id="warn"></div>
+  <div id="main">
+    <div id="stage"><svg id="map" xmlns="http://www.w3.org/2000/svg" viewBox="320 220 1100 1050" preserveAspectRatio="xMidYMid meet"></svg></div>
+    <div id="side"></div>
+  </div>
+  <div id="legend">
+    <span><i class="sw" style="background:#7BC47F"></i>&lt;70% full</span>
+    <span><i class="sw" style="background:#E1B84A"></i>70–90%</span>
+    <span><i class="sw" style="background:#E8803A"></i>90–100%</span>
+    <span><i class="sw" style="background:#D9473B"></i>plan exceeds capacity</span>
+    <span><i class="sw" style="background:#fff;border:1px dashed #2E7D4F"></i>planned production</span>
+  </div>
+</div>
+<script>
+(function(){
+  var client=(window.sigmaComputing&&window.sigmaComputing.plugin&&window.sigmaComputing.plugin.client)||null;
+  var defs=[{name:'source',type:'element'}];
+  var COLS=[['room','Room'],['area','Area'],['container','Container'],['label','Label'],['item','Item'],['flavor','Flavor'],['stage','Stage'],['cap','Capacity'],['onhand','On Hand'],['planned','Planned'],['unit','Unit'],['value','Value']];
+  COLS.forEach(function(c){defs.push({name:c[0],type:'column',source:'source',label:c[1]});});
+  if(client) client.config.configureEditorPanel(defs);
+
+  var NS='http://www.w3.org/2000/svg';
+  function el(n,a,p){var e=document.createElementNS(NS,n);for(var k in a)e.setAttribute(k,a[k]);if(p)p.appendChild(e);return e;}
+  var $=function(i){return document.getElementById(i);};
+
+  // ---- floor-plan geometry (coordinates follow the Waterville evacuation plan) ----
+  var G={
+   'Cultivation Storage':[340,262,66,268,'Storage #1',1],
+   'Dry Room 1':[420,262,63,268,'Dry 1 #2',1],
+   'Dry Room 2':[493,262,60,268,'Dry 2 #3',1],
+   'Cultivation Pod 4':[563,262,63,268,'Pod #4',1],
+   'Trim Room':[335,582,245,110,'Trim Room'],
+   'Cultivation Pod 5':[352,752,64,272,'Pod #5',1],'Cultivation Pod 6':[416,752,65,272,'Pod #6',1],
+   'Cultivation Pod 7':[481,752,66,272,'Pod #7',1],'Cultivation Pod 8':[547,752,65,272,'Pod #8',1],
+   'Boiler Room':[662,236,338,196,'Boiler Room'],
+   'ETOH Extraction':[662,432,298,88,'ETOH Extraction'],
+   'Seltzer / Beverage Lab':[662,520,258,142,'Beverage Lab'],
+   'MIP':[962,355,148,165,'MIP'],
+   'Extraction':[925,520,185,142,'Extraction'],
+   'Cage':[1019,674,85,94,'Cage'],
+   'Cultivation Pod 13':[693,735,313,52,'Cultivation Pod #13'],
+   'Cultivation Pod 12':[693,790,313,52,'Cultivation Pod #12'],
+   'Mfg Storage Pod 11':[693,857,313,52,'Mfg Storage Pod #11'],
+   'Mfg Storage Pod 10':[693,912,313,52,'Mfg Storage Pod #10'],
+   'Mfg Storage Pod 9':[693,967,313,52,'Mfg Storage Pod #9'],
+   'Warehouse':[1115,236,240,430,'Warehouse'],
+   'Vault':[335,1057,155,78,'Vault'],
+   'Retail':[700,1055,470,195,'Retail'],
+   'Non-cannabis Storage':[1180,1128,226,122,'Non-cannabis Storage']
+  };
+  var ROLES={
+   'Executive':{areas:null,desc:'All rooms'},
+   'Production':{areas:['Cultivation','Manufacturing','Canning Line'],desc:'Cultivation, manufacturing, canning'},
+   'Warehouse':{areas:['Beverage Pallets','Warehouse','Storage'],desc:'Pallet positions and storage'},
+   'Compliance':{areas:['Storage','Retail'],desc:'Controlled & finished product'}
+  };
+  var role='Executive', sel='Warehouse', rows=[];
+
+  var synth=[{"room": "Cultivation Storage", "area": "Cultivation", "container": "Crate", "label": "CS-A", "item": "Dried flower - bulk", "flavor": "", "stage": "Cured", "cap": 120, "onhand": 96, "planned": 12, "unit": "crates", "value": 410}, {"room": "Cultivation Storage", "area": "Cultivation", "container": "Bin", "label": "CS-B", "item": "Trim bins", "flavor": "", "stage": "Post-harvest", "cap": 80, "onhand": 41, "planned": 18, "unit": "bins", "value": 38}, {"room": "Dry Room 1", "area": "Cultivation", "container": "Rack", "label": "DR1-Racks", "item": "Hanging flower", "flavor": "", "stage": "Drying", "cap": 60, "onhand": 54, "planned": 8, "unit": "racks", "value": 265}, {"room": "Dry Room 2", "area": "Cultivation", "container": "Rack", "label": "DR2-Racks", "item": "Hanging flower", "flavor": "", "stage": "Drying", "cap": 60, "onhand": 44, "planned": 14, "unit": "racks", "value": 218}, {"room": "Cultivation Pod 4", "area": "Cultivation", "container": "Plant", "label": "P4", "item": "Plants", "flavor": "", "stage": "Flower", "cap": 320, "onhand": 296, "planned": 0, "unit": "plants", "value": 120}, {"room": "Cultivation Pod 5", "area": "Cultivation", "container": "Plant", "label": "P5", "item": "Plants", "flavor": "", "stage": "Flower", "cap": 320, "onhand": 248, "planned": 40, "unit": "plants", "value": 99}, {"room": "Cultivation Pod 6", "area": "Cultivation", "container": "Plant", "label": "P6", "item": "Plants", "flavor": "", "stage": "Flower", "cap": 320, "onhand": 300, "planned": 0, "unit": "plants", "value": 120}, {"room": "Cultivation Pod 7", "area": "Cultivation", "container": "Plant", "label": "P7", "item": "Plants", "flavor": "", "stage": "Veg", "cap": 320, "onhand": 180, "planned": 60, "unit": "plants", "value": 72}, {"room": "Cultivation Pod 8", "area": "Cultivation", "container": "Plant", "label": "P8", "item": "Plants", "flavor": "", "stage": "Veg", "cap": 320, "onhand": 120, "planned": 80, "unit": "plants", "value": 48}, {"room": "Cultivation Pod 12", "area": "Cultivation", "container": "Plant", "label": "P12", "item": "Plants", "flavor": "", "stage": "Flower", "cap": 160, "onhand": 152, "planned": 0, "unit": "plants", "value": 61}, {"room": "Cultivation Pod 13", "area": "Cultivation", "container": "Plant", "label": "P13", "item": "Plants", "flavor": "", "stage": "Veg", "cap": 160, "onhand": 96, "planned": 32, "unit": "plants", "value": 38}, {"room": "Trim Room", "area": "Cultivation", "container": "Bin", "label": "TR-1", "item": "Flower awaiting trim", "flavor": "", "stage": "Trim", "cap": 50, "onhand": 38, "planned": 10, "unit": "bins", "value": 160}, {"room": "Boiler Room", "area": "Manufacturing", "container": "Tank", "label": "ETOH-Feed", "item": "Ethanol (solvent)", "flavor": "", "stage": "Solvent", "cap": 500, "onhand": 310, "planned": 0, "unit": "gal", "value": 3}, {"room": "ETOH Extraction", "area": "Manufacturing", "container": "Tank", "label": "CR-1", "item": "Crude oil", "flavor": "", "stage": "Crude", "cap": 200, "onhand": 132, "planned": 40, "unit": "L", "value": 190}, {"room": "ETOH Extraction", "area": "Manufacturing", "container": "Tank", "label": "WIP-2", "item": "Winterized oil", "flavor": "", "stage": "WIP", "cap": 150, "onhand": 64, "planned": 30, "unit": "L", "value": 120}, {"room": "MIP", "area": "Manufacturing", "container": "Crate", "label": "MIP-1", "item": "Infused product WIP", "flavor": "", "stage": "Infusion", "cap": 40, "onhand": 31, "planned": 6, "unit": "crates", "value": 95}, {"room": "Extraction", "area": "Manufacturing", "container": "Tank", "label": "DIST-1", "item": "Distillate", "flavor": "", "stage": "Refined", "cap": 120, "onhand": 88, "planned": 20, "unit": "L", "value": 260}, {"room": "Extraction", "area": "Manufacturing", "container": "Bin", "label": "RES-1", "item": "Live rosin", "flavor": "", "stage": "Pressed", "cap": 30, "onhand": 12, "planned": 6, "unit": "bins", "value": 70}, {"room": "Seltzer / Beverage Lab", "area": "Canning Line", "container": "Tank", "label": "BT-1", "item": "Hi5 seltzer base", "flavor": "Blood Orange", "stage": "Brite tank", "cap": 500, "onhand": 430, "planned": 0, "unit": "gal", "value": 108}, {"room": "Seltzer / Beverage Lab", "area": "Canning Line", "container": "Tank", "label": "BT-2", "item": "Hi5 seltzer base", "flavor": "Blueberry Lemonade", "stage": "Brite tank", "cap": 500, "onhand": 290, "planned": 0, "unit": "gal", "value": 72}, {"room": "Seltzer / Beverage Lab", "area": "Canning Line", "container": "Tank", "label": "BT-3", "item": "Hi5 seltzer base", "flavor": "Peach Mango", "stage": "Brite tank", "cap": 500, "onhand": 120, "planned": 0, "unit": "gal", "value": 30}, {"room": "Seltzer / Beverage Lab", "area": "Canning Line", "container": "Tank", "label": "BT-4", "item": "Hi5 seltzer base", "flavor": "Watermelon Lime", "stage": "Brite tank", "cap": 500, "onhand": 470, "planned": 0, "unit": "gal", "value": 118}, {"room": "Seltzer / Beverage Lab", "area": "Canning Line", "container": "Hopper", "label": "CAN-FEED", "item": "Empty cans (on line)", "flavor": "", "stage": "Staged", "cap": 40, "onhand": 22, "planned": 0, "unit": "cases", "value": 18}, {"room": "Cage", "area": "Storage", "container": "Crate", "label": "CG-1", "item": "Controlled inputs", "flavor": "", "stage": "Secured", "cap": 20, "onhand": 14, "planned": 2, "unit": "crates", "value": 85}, {"room": "Mfg Storage Pod 9", "area": "Storage", "container": "Pallet", "label": "MS9", "item": "Packaged flower", "flavor": "", "stage": "Finished", "cap": 40, "onhand": 34, "planned": 6, "unit": "pallets", "value": 306}, {"room": "Mfg Storage Pod 10", "area": "Storage", "container": "Pallet", "label": "MS10", "item": "Vape & concentrates", "flavor": "", "stage": "Finished", "cap": 40, "onhand": 27, "planned": 9, "unit": "pallets", "value": 243}, {"room": "Mfg Storage Pod 11", "area": "Storage", "container": "Pallet", "label": "MS11", "item": "Edibles", "flavor": "", "stage": "Finished", "cap": 40, "onhand": 38, "planned": 3, "unit": "pallets", "value": 342}, {"room": "Warehouse", "area": "Beverage Pallets", "container": "Pallet", "label": "PR-BO", "item": "Hi5 finished cans", "flavor": "Blood Orange", "stage": "Finished", "cap": 14, "onhand": 12, "planned": 5, "unit": "pallets", "value": 58}, {"room": "Warehouse", "area": "Beverage Pallets", "container": "Pallet", "label": "PR-BL", "item": "Hi5 finished cans", "flavor": "Blueberry Lemonade", "stage": "Finished", "cap": 14, "onhand": 13, "planned": 4, "unit": "pallets", "value": 62}, {"room": "Warehouse", "area": "Beverage Pallets", "container": "Pallet", "label": "PR-PM", "item": "Hi5 finished cans", "flavor": "Peach Mango", "stage": "Finished", "cap": 14, "onhand": 9, "planned": 8, "unit": "pallets", "value": 43}, {"room": "Warehouse", "area": "Beverage Pallets", "container": "Pallet", "label": "PR-WL", "item": "Hi5 finished cans", "flavor": "Watermelon Lime", "stage": "Finished", "cap": 14, "onhand": 14, "planned": 3, "unit": "pallets", "value": 67}, {"room": "Warehouse", "area": "Beverage Pallets", "container": "Pallet", "label": "PR-EC", "item": "Empty cans & cartons", "flavor": "", "stage": "Packaging", "cap": 24, "onhand": 16, "planned": 6, "unit": "pallets", "value": 21}, {"room": "Warehouse", "area": "Warehouse", "container": "Pallet", "label": "WH-GEN", "item": "General warehouse stock", "flavor": "", "stage": "Supplies", "cap": 60, "onhand": 31, "planned": 4, "unit": "pallets", "value": 44}, {"room": "Vault", "area": "Storage", "container": "Safe", "label": "V-1", "item": "Finished product reserve", "flavor": "", "stage": "Secured", "cap": 60, "onhand": 44, "planned": 6, "unit": "units", "value": 320}, {"room": "Retail", "area": "Retail", "container": "Shelf", "label": "RT-1", "item": "Retail sellable inventory", "flavor": "", "stage": "On shelf", "cap": 900, "onhand": 640, "planned": 150, "unit": "units", "value": 410}, {"room": "Non-cannabis Storage", "area": "Storage", "container": "Pallet", "label": "NC-1", "item": "Merch & packaging", "flavor": "", "stage": "Supplies", "cap": 24, "onhand": 10, "planned": 2, "unit": "pallets", "value": 14}];
+
+  function num(v){v=Number(v);return isFinite(v)?v:0;}
+  function norm(raw){return {room:String(raw.room||''),area:String(raw.area||''),container:String(raw.container||''),label:String(raw.label||''),item:String(raw.item||''),flavor:String(raw.flavor||''),stage:String(raw.stage||''),cap:num(raw.cap),onhand:num(raw.onhand),planned:num(raw.planned),unit:String(raw.unit||''),value:num(raw.value)};}
+  function color(f,over){if(over)return '#D9473B';return f>=.9?'#E8803A':f>=.7?'#E1B84A':'#7BC47F';}
+  function fmt(n){return Math.round(n).toLocaleString();}
+  function agg(list){var c=0,o=0,p=0,v=0;list.forEach(function(r){c+=r.cap;o+=r.onhand;p+=r.planned;v+=r.value;});return {cap:c,on:o,pl:p,val:v,fill:c?o/c:0,proj:c?(o+p)/c:0};}
+  function byRoom(){var m={};rows.forEach(function(r){(m[r.room]=m[r.room]||[]).push(r);});return m;}
+  function inRole(areaList){var a=ROLES[role].areas;return !a||areaList.some(function(x){return a.indexOf(x)>=0;});}
+
+  function bevPallets(){return rows.filter(function(r){return r.area==='Beverage Pallets';});}
+
+  function render(){
+    // roles
+    var rb=$('roles');rb.innerHTML='';
+    Object.keys(ROLES).forEach(function(k){var b=document.createElement('div');b.className='role'+(k===role?' on':'');b.textContent=k;b.title=ROLES[k].desc;b.onclick=function(){role=k;render();};rb.appendChild(b);});
+    var rm=byRoom();
+    var bp=agg(bevPallets()), overflow=Math.max(0,bp.on+bp.pl-bp.cap);
+    var all=agg(rows);
+    var near=Object.keys(rm).filter(function(k){return agg(rm[k]).proj>=.9;}).length;
+    var kp=[];
+    if(role==='Executive'){kp=[['Inventory value','$'+fmt(all.val)+'K'],['Overall fill',Math.round(all.fill*100)+'%'],['Rooms ≥90% (with plan)',near],['Beverage pallet slots free after plan',Math.max(0,bp.cap-bp.on-bp.pl)]];}
+    else if(role==='Production'){
+      var tk=rows.filter(function(r){return r.container==='Tank'&&r.area==='Canning Line';}),ta=agg(tk);
+      var pl=agg(rows.filter(function(r){return r.container==='Plant';}));
+      kp=[['Canning tanks fill',Math.round(ta.fill*100)+'%'],['Brite tank volume',fmt(ta.on)+' gal'],['Plant canopy fill',Math.round(pl.fill*100)+'%'],['WIP value','$'+fmt(agg(rows.filter(function(r){return r.area==='Manufacturing';})).val)+'K']];}
+    else if(role==='Warehouse'){kp=[['Beverage pallet positions',bp.cap],['Occupied',bp.on],['Planned inbound',bp.pl],['Shortfall',overflow>0?overflow+' over':'None']];}
+    else {var cs=agg(rows.filter(function(r){return r.room==='Vault'||r.room==='Cage';}));var rt=agg(rows.filter(function(r){return r.room==='Retail';}));
+      kp=[['Vault + cage fill',Math.round(cs.fill*100)+'%'],['Retail fill',Math.round(rt.fill*100)+'%'],['Finished storage pods',Math.round(agg(rows.filter(function(r){return /Mfg Storage/.test(r.room);})).fill*100)+'%'],['Controlled value','$'+fmt(cs.val)+'K']];}
+    $('kpis').innerHTML=kp.map(function(k){return '<div class="kpi"><small>'+k[0]+'</small><b>'+k[1]+'</b></div>';}).join('');
+    var w=$('warn');
+    if(overflow>0){w.style.display='block';w.innerHTML='<b>Pallet capacity warning:</b> the production plan adds '+bp.pl+' beverage pallets but only '+Math.max(0,bp.cap-bp.on)+' of '+bp.cap+' positions are free — <b>'+overflow+' pallets have nowhere to go.</b> '+bevPallets().filter(function(r){return r.onhand+r.planned>r.cap;}).map(function(r){return (r.flavor||r.item)+' (+'+(r.onhand+r.planned-r.cap)+')';}).join(', ');}
+    else w.style.display='none';
+    drawMap(rm);drawSide(rm);
+  }
+
+  function drawMap(rm){
+    var svg=$('map');svg.innerHTML='';
+    el('rect',{x:320,y:220,width:1100,height:1050,fill:'#F4F8F5',rx:10},svg);
+    var defsEl=el('defs',{},svg);
+    var pat=el('pattern',{id:'hatch',width:8,height:8,patternUnits:'userSpaceOnUse',patternTransform:'rotate(45)'},defsEl);
+    el('rect',{width:8,height:8,fill:'#fff'},pat);el('rect',{width:4,height:8,fill:'#2E7D4F',opacity:.35},pat);
+    Object.keys(G).forEach(function(k){
+      var g=G[k],list=rm[k]||[],a=agg(list),ar=list.map(function(r){return r.area;});
+      var dim=!inRole(ar.length?ar:['__']);
+      var over=a.proj>1.0001;
+      var grp=el('g',{'class':'room'+(k===sel?' sel':''),opacity:dim?.28:1},svg);
+      grp.addEventListener('click',function(){sel=k;render();});
+      var vert=g[5]===1;
+      el('rect',{'class':'b',x:g[0],y:g[1],width:g[2],height:g[3],rx:6,fill:list.length?color(a.fill,false):'#E6EBE8',opacity:.9,stroke:over?'#D9473B':'#14231C','stroke-width':over?4:1.5,'stroke-dasharray':over?'8 4':'0'},grp);
+      if(a.pl>0&&a.cap){ // planned strip along the bottom
+        var pw=Math.min(a.pl/a.cap,1-Math.min(a.fill,1))*(vert?g[3]:g[2]);
+        if(pw>0.5){ if(vert) el('rect',{x:g[0]+2,y:g[1]+g[3]-2-pw,width:g[2]-4,height:pw,fill:'url(#hatch)',stroke:'#2E7D4F','stroke-dasharray':'3 2','stroke-width':1.2},grp);
+          else el('rect',{x:g[0]+g[2]-2-pw,y:g[1]+2,width:pw,height:g[3]-4,fill:'url(#hatch)',stroke:'#2E7D4F','stroke-dasharray':'3 2','stroke-width':1.2},grp);}
+      }
+      var tx=g[0]+g[2]/2,ty=k==='Warehouse'?g[1]+40:g[1]+g[3]/2;
+      var t=el('text',{x:tx,y:ty,'text-anchor':'middle','font-size':vert?15:(g[3]<60?17:21),'font-weight':700,fill:'#14231C'},grp);
+      if(vert){t.setAttribute('transform','rotate(-90 '+(tx-9)+' '+ty+')');t.setAttribute('x',tx-9);}
+      t.textContent=g[4];
+      if(list.length){var p=el('text',{x:tx,y:vert?ty:ty+(g[3]<60?0:22),'text-anchor':'middle','font-size':16,fill:'#14231C'},grp);
+        if(vert){p.setAttribute('transform','rotate(-90 '+(tx+19)+' '+ty+')');p.setAttribute('x',tx+19);p.setAttribute('font-size',13);}
+        else if(g[3]<60){t.setAttribute('x',g[0]+10);t.setAttribute('text-anchor','start');p.setAttribute('x',g[0]+g[2]-10);p.setAttribute('text-anchor','end');}
+        p.textContent=Math.round(a.fill*100)+'%'+(a.pl?' → '+Math.round(a.proj*100)+'%':'');}
+    });
+    // beverage pallet grid inside warehouse
+    var cells=[],bp=bevPallets();
+    var colors={'Blood Orange':'#E8803A','Blueberry Lemonade':'#4D6FB3','Peach Mango':'#E5A06B','Watermelon Lime':'#5DAF6A','':'#8C9A93'};
+    bp.forEach(function(r){for(var i=0;i<r.cap;i++)cells.push({c:colors[r.flavor]||'#8C9A93',st:i<r.onhand?'on':(i<r.onhand+r.planned?'pl':'free')});
+      for(var j=0;j<Math.max(0,r.onhand+r.planned-r.cap);j++)cells.push({c:'#D9473B',st:'over'});});
+    var gx=1128,gy=470,cw=36,ch=26,perRow=6;
+    el('text',{x:gx,y:gy-12,'font-size':15,'font-weight':700,fill:'#14231C'},svg).textContent='Beverage pallet positions';
+    cells.forEach(function(c,i){var x=gx+(i%perRow)*(cw+3),y=gy+Math.floor(i/perRow)*(ch+3);
+      var a={x:x,y:y,width:cw,height:ch,rx:3};
+      if(c.st==='on'){a.fill=c.c;a.stroke=c.c;}else if(c.st==='pl'){a.fill='url(#hatch)';a.stroke=c.c;a['stroke-dasharray']='4 2';a['stroke-width']=2;}
+      else if(c.st==='over'){a.fill='#FDECEA';a.stroke='#D9473B';a['stroke-width']=2;}else{a.fill='#fff';a.stroke='#C9D6CE';}
+      el('rect',a,svg);if(c.st==='over'){var tt=el('text',{x:x+cw/2,y:y+19,'text-anchor':'middle','font-size':16,'font-weight':800,fill:'#D9473B'},svg);tt.textContent='✕';}});
+  }
+
+  function bar(r){
+    var f=r.cap?r.onhand/r.cap:0,pl=r.cap?Math.min(r.planned/r.cap,Math.max(0,1-f)):0,over=r.onhand+r.planned>r.cap;
+    return '<div class="row"><div class="hd"><span><b>'+(r.flavor||r.item)+'</b> · '+r.label+'</span><span>'+fmt(r.onhand)+' / '+fmt(r.cap)+' '+r.unit+'</span></div>'+
+      '<div class="bar"><i style="width:'+Math.min(100,f*100)+'%;background:'+color(f,over)+'"></i><u style="left:'+Math.min(100,f*100)+'%;width:'+pl*100+'%"></u></div>'+
+      '<div style="color:#6B7B72;margin-top:2px">'+r.stage+(r.planned?' · +'+fmt(r.planned)+' planned':'')+(over?' · <b style="color:#D9473B">'+fmt(r.onhand+r.planned-r.cap)+' over capacity</b>':'')+'</div></div>';
+  }
+  function drawSide(rm){
+    var list=rm[sel]||[],a=agg(list),s=$('side');
+    var nm=(G[sel]||[])[4]||sel;
+    var h='<h3>'+nm+'</h3><div class="sub">'+(list.length?Math.round(a.fill*100)+'% full'+(a.pl?' · projected '+Math.round(a.proj*100)+'% after production plan':'')+' · $'+fmt(a.val)+'K':'No tracked inventory in this room')+'</div>';
+    var tk=list.filter(function(r){return r.container==='Tank'&&r.area==='Canning Line';});
+    if(tk.length){h+='<div class="sub" style="margin:0 0 2px"><b>Canning line — tanks &amp; flavors</b></div><div class="tanks">'+tk.map(function(r){var f=r.cap?r.onhand/r.cap:0;var col={'Blood Orange':'#E8803A','Blueberry Lemonade':'#4D6FB3','Peach Mango':'#E5A06B','Watermelon Lime':'#5DAF6A'}[r.flavor]||'#7BC47F';
+      return '<div class="tank"><div class="cyl"><i style="height:'+f*100+'%;background:'+col+'"></i></div><b>'+Math.round(f*100)+'%</b>'+r.label+'<br>'+r.flavor+'</div>';}).join('')+'</div>';}
+    if(sel==='Warehouse'){var bp=agg(bevPallets());h+='<div class="sub"><b>Beverage pallet positions:</b> '+bp.on+' occupied + '+bp.pl+' planned of '+bp.cap+'</div>';}
+    h+=list.map(bar).join('');
+    s.innerHTML=h;
+  }
+
+  function load(data){rows=data.map(norm);render();}
+  load(synth);
+  if(client){
+    var unsub=null;
+    client.config.subscribe(function(cfg){
+      if(unsub)unsub();
+      if(cfg&&cfg.source){
+        unsub=client.elements.subscribeToElementData(cfg.source,function(d){
+          var cols=COLS.filter(function(c){return cfg[c[0]]&&d[cfg[c[0]]];});
+          if(cols.length<8)return;
+          var n=d[cfg[cols[0][0]]].length,out=[];
+          for(var i=0;i<n;i++){var o={};COLS.forEach(function(c){o[c[0]]=cfg[c[0]]&&d[cfg[c[0]]]?d[cfg[c[0]]][i]:'';});out.push(o);}
+          load(out);
+        });
+      }
+    });
+  }
+})();
+
+</script>
+</body>
+</html>
